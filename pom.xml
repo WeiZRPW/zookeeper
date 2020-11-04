@@ -64,6 +64,7 @@
     <module>zookeeper-client</module>
     <module>zookeeper-recipes</module>
     <module>zookeeper-assembly</module>
+    <module>zookeeper-compatibility-tests</module>
   </modules>
 
   <scm>
@@ -78,7 +79,7 @@
   </issueManagement>
   <ciManagement>
     <system>jenkins</system>
-    <url>https://builds.apache.org/view/S-Z/view/ZooKeeper/</url>
+    <url>https://ci-hadoop.apache.org/view/ZooKeeper/</url>
   </ciManagement>
   <mailingLists>
     <mailingList>
@@ -117,7 +118,7 @@
   <developers>
     <developer>
       <id>tdunning</id>
-      <name>Ted Dunning	</name>
+      <name>Ted Dunning</name>
       <email>tdunning@apache.org</email>
       <timezone>-8</timezone>
     </developer>
@@ -259,13 +260,18 @@
       <id>full-build</id>
       <modules>
         <module>zookeeper-contrib</module>
+        <!-- zookeeper-it needed by fatjar contrib -->
+        <module>zookeeper-it</module>
       </modules>
     </profile>
     <profile>
-      <id>java-build</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-      </activation>
+      <!-- fatjar only profile; zookeeper-contrib will activate the fatjar in its pom -->
+      <id>fatjar</id>
+      <modules>
+        <module>zookeeper-contrib</module>
+        <!-- zookeeper-it needed by fatjar contrib -->
+        <module>zookeeper-it</module>
+      </modules>
     </profile>
     <profile>
         <id>apache-release</id>
@@ -307,6 +313,108 @@
             </plugins>
         </build>
     </profile>
+    <profile>
+      <id>m2e</id>
+      <activation>
+        <property>
+          <name>m2e.version</name>
+        </property>
+      </activation>
+      <properties>
+        <maven.compiler.release>8</maven.compiler.release>
+      </properties>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.eclipse.m2e</groupId>
+              <artifactId>lifecycle-mapping</artifactId>
+              <version>1.0.0</version>
+              <configuration>
+                <lifecycleMappingMetadata>
+                  <pluginExecutions>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <versionRange>[0,)</versionRange>
+                        <goals>
+                          <goal>exec</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore />
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <versionRange>[0,)</versionRange>
+                        <goals>
+                          <goal>run</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore />
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>com.ruleoftech</groupId>
+                        <artifactId>markdown-page-generator-plugin</artifactId>
+                        <versionRange>[0,)</versionRange>
+                        <goals>
+                          <goal>generate</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore />
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>javacc-maven-plugin</artifactId>
+                        <versionRange>[0,)</versionRange>
+                        <goals>
+                          <goal>javacc</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore />
+                      </action>
+                    </pluginExecution>
+                    <pluginExecution>
+                      <pluginExecutionFilter>
+                        <groupId>com.github.koraktor</groupId>
+                        <artifactId>mavanagaiata</artifactId>
+                        <versionRange>[0,)</versionRange>
+                        <goals>
+                          <goal>commit</goal>
+                        </goals>
+                      </pluginExecutionFilter>
+                      <action>
+                        <ignore />
+                      </action>
+                    </pluginExecution>
+                  </pluginExecutions>
+                </lifecycleMappingMetadata>
+              </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
+    <profile>
+      <id>jdk-release-flag</id>
+      <activation>
+        <jdk>[9,)</jdk>
+      </activation>
+      <properties>
+        <maven.compiler.release>8</maven.compiler.release>
+      </properties>
+    </profile>
   </profiles>
 
   <properties>
@@ -318,27 +426,27 @@
     <surefire-forkcount>8</surefire-forkcount>
 
     <!-- dependency versions -->
-    <slf4j.version>1.7.25</slf4j.version>
-    <audience-annotations.version>0.5.0</audience-annotations.version>
+    <slf4j.version>1.7.30</slf4j.version>
+    <audience-annotations.version>0.12.0</audience-annotations.version>
     <jmockit.version>1.48</jmockit.version>
-    <junit.version>4.12</junit.version>
+    <junit.version>5.6.2</junit.version>
+    <junit-platform.version>1.6.2</junit-platform.version>
     <log4j.version>1.2.17</log4j.version>
-    <mockito.version>2.27.0</mockito.version>
-    <hamcrest.version>1.3</hamcrest.version>
-    <commons-cli.version>1.2</commons-cli.version>
-    <netty.version>4.1.45.Final</netty.version>
-    <jetty.version>9.4.24.v20191120</jetty.version>
-    <jackson.version>2.9.10.3</jackson.version>
-    <json.version>1.1.1</json.version>
-    <jline.version>2.11</jline.version>
-    <snappy.version>1.1.7</snappy.version>
+    <mockito.version>2.28.2</mockito.version>
+    <hamcrest.version>2.2</hamcrest.version>
+    <commons-cli.version>1.4</commons-cli.version>
+    <netty.version>4.1.50.Final</netty.version>
+    <jetty.version>9.4.32.v20200930</jetty.version>
+    <jackson.version>2.10.5</jackson.version>
+    <jline.version>2.14.6</jline.version>
+    <snappy.version>1.1.7.7</snappy.version>
     <kerby.version>2.0.0</kerby.version>
     <bouncycastle.version>1.60</bouncycastle.version>
-    <commons-collections.version>3.2.2</commons-collections.version>
-    <commons-lang.version>2.6</commons-lang.version>
-    <dropwizard.version>3.2.5</dropwizard.version>
-    <spotbugsannotations.version>3.1.9</spotbugsannotations.version>
+    <commons-collections.version>4.4</commons-collections.version>
+    <dropwizard.version>4.1.12.1</dropwizard.version>
+    <spotbugsannotations.version>4.0.2</spotbugsannotations.version>
     <checkstyle.version>8.17</checkstyle.version>
+    <enforcer.version>3.0.0-M3</enforcer.version>
 
     <!-- parameters to pass to C client build -->
     <c-client-openssl>yes</c-client-openssl>
@@ -350,18 +458,13 @@
     <dependencies>
       <dependency>
         <groupId>org.hamcrest</groupId>
-        <artifactId>hamcrest-all</artifactId>
+        <artifactId>hamcrest-library</artifactId>
         <version>${hamcrest.version}</version>
       </dependency>
       <dependency>
-        <groupId>commons-collections</groupId>
-        <artifactId>commons-collections</artifactId>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-collections4</artifactId>
         <version>${commons-collections.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>commons-lang</groupId>
-        <artifactId>commons-lang</artifactId>
-        <version>${commons-lang.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.yetus</groupId>
@@ -447,8 +550,30 @@
         <version>${jmockit.version}</version>
       </dependency>
       <dependency>
-        <groupId>junit</groupId>
-        <artifactId>junit</artifactId>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>${junit.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-engine</artifactId>
+        <version>${junit.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-params</artifactId>
+        <version>${junit.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.platform</groupId>
+        <artifactId>junit-platform-runner</artifactId>
+        <version>${junit-platform.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.vintage</groupId>
+        <artifactId>junit-vintage-engine</artifactId>
         <version>${junit.version}</version>
       </dependency>
       <dependency>
@@ -477,6 +602,11 @@
         <version>${jetty.version}</version>
       </dependency>
       <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-client</artifactId>
+        <version>${jetty.version}</version>
+      </dependency>
+      <dependency>
         <groupId>io.dropwizard.metrics</groupId>
         <artifactId>metrics-core</artifactId>
         <version>${dropwizard.version}</version>
@@ -491,17 +621,6 @@
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <version>${jackson.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>com.googlecode.json-simple</groupId>
-        <artifactId>json-simple</artifactId>
-        <version>${json.version}</version>
-        <exclusions>
-          <exclusion>
-              <groupId>junit</groupId>
-              <artifactId>junit</artifactId>
-          </exclusion>
-        </exclusions>
       </dependency>
       <dependency>
         <groupId>jline</groupId>
@@ -527,14 +646,9 @@
     <pluginManagement>
       <plugins>
         <plugin>
-          <groupId>org.codehaus.mojo</groupId>
-          <artifactId>properties-maven-plugin</artifactId>
-          <version>1.0.0</version>
-        </plugin>
-        <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.8.0</version>
+          <version>3.8.1</version>
           <configuration>
              <showWarnings>true</showWarnings>
              <compilerArgs>
@@ -552,6 +666,13 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
           <version>3.1.0</version>
+          <configuration>
+            <archive>
+              <manifestEntries>
+                <Implementation-Build>${mvngit.commit.id}</Implementation-Build>
+              </manifestEntries>
+            </archive>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -561,8 +682,9 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>3.0.1</version>
+          <version>3.1.1</version>
           <configuration>
+            <quiet>true</quiet>
             <doclint>none</doclint>
           </configuration>
         </plugin>
@@ -574,7 +696,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-release-plugin</artifactId>
-          <version>2.5.3</version>
+          <version>3.0.0-M1</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -602,10 +724,12 @@
           <version>1.6.0</version>
         </plugin>
         <plugin>
-          <groupId>pl.project13.maven</groupId>
-          <artifactId>git-commit-id-plugin</artifactId>
-          <version>2.2.5</version>
-          <inherited>false</inherited>
+          <groupId>com.github.koraktor</groupId>
+          <artifactId>mavanagaiata</artifactId>
+          <version>0.9.4</version>
+          <configuration>
+            <skipNoGit>true</skipNoGit>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -625,7 +749,7 @@
         <plugin>
           <groupId>com.github.spotbugs</groupId>
           <artifactId>spotbugs-maven-plugin</artifactId>
-          <version>3.1.9</version>
+          <version>4.0.0</version>
           <configuration>
             <excludeFilterFile>excludeFindBugsFilter.xml</excludeFilterFile>
           </configuration>
@@ -681,33 +805,17 @@
 
     <plugins>
       <plugin>
-        <groupId>pl.project13.maven</groupId>
-        <artifactId>git-commit-id-plugin</artifactId>
+        <groupId>com.github.koraktor</groupId>
+        <artifactId>mavanagaiata</artifactId>
         <executions>
           <execution>
             <id>find-current-git-revision</id>
             <goals>
-              <goal>revision</goal>
+              <goal>commit</goal>
             </goals>
-            <phase>generate-resources</phase>
+            <phase>validate</phase>
           </execution>
         </executions>
-        <configuration>
-          <skipPoms>false</skipPoms>
-          <runOnlyOnce>true</runOnlyOnce>
-          <failOnNoGitDirectory>false</failOnNoGitDirectory>
-          <dotGitDirectory>${project.basedir}/.git</dotGitDirectory>
-          <prefix>git</prefix>
-          <verbose>false</verbose>
-          <generateGitPropertiesFile>true</generateGitPropertiesFile>
-          <generateGitPropertiesFilename>${project.basedir}/zookeeper-server/src/main/resources/git.properties</generateGitPropertiesFilename>
-          <format>properties</format>
-          <gitDescribe>
-            <skip>false</skip>
-            <always>false</always>
-            <dirty>-dirty</dirty>
-          </gitDescribe>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.openclover</groupId>
@@ -848,7 +956,6 @@
           <excludes>
             <exclude>**/log4j.properties</exclude>
             <exclude>**/README.md</exclude>
-            <exclude>**/git.properties</exclude>
             <exclude>**/findbugsExcludeFile.xml</exclude>
             <exclude>**/checkstyle-noframes-sorted.xsl</exclude>
             <exclude>**/configure.ac</exclude>
@@ -862,23 +969,22 @@
             <exclude>src/main/resources/markdown/html/*</exclude>
             <exclude>src/main/resources/markdown/images/*</exclude>
             <!-- contrib -->
-            <exclude>zookeeper-contrib-monitoring/JMX-RESOURCES</exclude>
-            <exclude>zookeeper-contrib-fatjar/src/main/resources/mainClasses</exclude>
-            <exclude>zookeeper-contrib-zkperl/Changes</exclude>
-            <exclude>zookeeper-contrib-zkperl/MANIFEST</exclude>
-            <exclude>zookeeper-contrib-zkpython/src/test/zoo.cfg</exclude>
-            <exclude>zookeeper-contrib-loggraph/src/main/resources/webapp/org/apache/zookeeper/graph/resources/*</exclude>
-            <exclude>src/main/resources/webapp/org/apache/zookeeper/graph/resources/*</exclude>
-            <exclude>src/main/java/com/nitido/utils/toaster/Toaster.java</exclude>
-            <exclude>TODO</exclude>
+            <exclude>**/JMX-RESOURCES</exclude>
+            <exclude>**/src/main/resources/mainClasses</exclude>
+            <exclude>**/Changes</exclude>
+            <exclude>**/MANIFEST</exclude>
+            <exclude>**/src/test/zoo.cfg</exclude>
+            <exclude>**/src/main/resources/webapp/org/apache/zookeeper/graph/resources/*</exclude>
+            <exclude>**/src/main/java/com/nitido/utils/toaster/Toaster.java</exclude>
+            <exclude>**/TODO</exclude>
             <!-- c client -->
             <exclude>**/acinclude.m4</exclude>
             <exclude>**/aminclude.am</exclude>
-            <exclude>src/hashtable/*</exclude>
-            <exclude>include/winconfig.h</exclude>
-            <exclude>tests/wrappers.opt</exclude>
-            <exclude>tests/zoo.cfg</exclude>
-            <exclude>tests/wrappers-mt.opt</exclude>
+            <exclude>**/src/hashtable/*</exclude>
+            <exclude>**/include/winconfig.h</exclude>
+            <exclude>**/tests/wrappers.opt</exclude>
+            <exclude>**/tests/zoo.cfg</exclude>
+            <exclude>**/tests/wrappers-mt.opt</exclude>
             <exclude>**/c-doc.Doxyfile</exclude>
           </excludes>
           <consoleOutput>true</consoleOutput>
@@ -890,8 +996,12 @@
           <inherited>false</inherited>
           <configuration>
             <!-- update the version inside the C sources -->
-            <preparationGoals>clean install -DskipTests antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</preparationGoals>
-            <completionGoals>clean install -DskipTests antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</completionGoals>
+            <preparationGoals>clean verify -DskipTests antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</preparationGoals>
+            <completionGoals>clean verify -DskipTests antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</completionGoals>
+            <pushChanges>false</pushChanges>
+            <localCheckout>true</localCheckout>
+            <autoVersionSubmodules>true</autoVersionSubmodules>
+            <tagNameFormat>release-@{project.version}</tagNameFormat>
           </configuration>
         </plugin>
         <plugin>
@@ -922,6 +1032,64 @@
                  <message>Prepared ${project.version}</message>
               </configuration>
             </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>${enforcer.version}</version>
+        <executions>
+          <execution>
+            <id>banned-commons-lang</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <bannedDependencies>
+                  <excludes>
+                    <exclude>commons-lang:commons-lang</exclude>
+                  </excludes>
+                  <searchTransitive>false</searchTransitive>
+                  <message>We don't use commons-lang any more, so do not depend on it directly.</message>
+                </bannedDependencies>
+              </rules>
+            </configuration>
+          </execution>
+          <execution>
+            <id>banned-commons-lang3</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <bannedDependencies>
+                  <excludes>
+                    <exclude>org.apache.commons:commons-lang3</exclude>
+                  </excludes>
+                  <searchTransitive>false</searchTransitive>
+                  <message>We don't use commons-lang3, so do not depend on it directly.</message>
+                </bannedDependencies>
+              </rules>
+            </configuration>
+          </execution>
+          <execution>
+            <id>banned-json-simple</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <bannedDependencies>
+                  <excludes>
+                    <exclude>com.googlecode.json-simple:json-simple</exclude>
+                  </excludes>
+                  <searchTransitive>false</searchTransitive>
+                  <message>We don't use json-simple any more, so do not depend on it directly.</message>
+                </bannedDependencies>
+              </rules>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>

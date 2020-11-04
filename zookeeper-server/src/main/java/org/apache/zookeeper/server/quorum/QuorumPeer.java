@@ -54,6 +54,7 @@ import org.apache.zookeeper.KeeperException.BadArgumentsException;
 import org.apache.zookeeper.common.AtomicFileWritingIdiom;
 import org.apache.zookeeper.common.AtomicFileWritingIdiom.WriterStatement;
 import org.apache.zookeeper.common.QuorumX509Util;
+import org.apache.zookeeper.common.Time;
 import org.apache.zookeeper.common.X509Exception;
 import org.apache.zookeeper.jmx.MBeanRegistry;
 import org.apache.zookeeper.jmx.ZKMBeanInfo;
@@ -530,6 +531,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      */
     public long start_fle, end_fle; // fle = fast leader election
     public static final String FLE_TIME_UNIT = "MS";
+    private long unavailableStartTime;
 
     /*
      * Default value of peer is participant
@@ -859,6 +861,14 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
 
     public void setZabState(ZabState zabState) {
+        if ((zabState == ZabState.BROADCAST) && (unavailableStartTime != 0)) {
+            long unavailableTime = Time.currentElapsedTime() - unavailableStartTime;
+            ServerMetrics.getMetrics().UNAVAILABLE_TIME.add(unavailableTime);
+            if (getPeerState() == ServerState.LEADING) {
+                ServerMetrics.getMetrics().LEADER_UNAVAILABLE_TIME.add(unavailableTime);
+            }
+            unavailableStartTime = 0;
+        }
         this.zabState.set(zabState);
         LOG.info("Peer state changed: {}", getDetailedPeerState());
     }
@@ -1003,6 +1013,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     AdminServer adminServer;
 
+    private final boolean reconfigEnabled;
+
     public static QuorumPeer testingQuorumPeer() throws SaslException {
         return new QuorumPeer();
     }
@@ -1014,6 +1026,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         adminServer = AdminServerFactory.createAdminServer();
         x509Util = createX509Util();
         initialize();
+        reconfigEnabled = QuorumPeerConfig.isReconfigEnabled();
     }
 
     // VisibleForTesting
@@ -1366,6 +1379,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
              * Main loop
              */
             while (running) {
+                if (unavailableStartTime == 0) {
+                    unavailableStartTime = Time.currentElapsedTime();
+                }
+
                 switch (getPeerState()) {
                 case LOOKING:
                     LOG.info("LOOKING");
@@ -1804,6 +1821,11 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
 
     public void setLastSeenQuorumVerifier(QuorumVerifier qv, boolean writeToDisk) {
+        if (!isReconfigEnabled()) {
+            LOG.info("Dynamic reconfig is disabled, we don't store the last seen config.");
+            return;
+        }
+
         // If qcm is non-null, we may call qcm.connectOne(), which will take the lock on qcm
         // and then take QV_LOCK.  Take the locks in the same order to ensure that we don't
         // deadlock against other callers of connectOne().  If qcmRef gets set in another
@@ -1943,8 +1965,6 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     /**
      * Return syncEnabled.
-     *
-     * @return
      */
     public boolean getSyncEnabled() {
         if (System.getProperty(SYNC_ENABLED) != null) {
@@ -2153,7 +2173,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
 
     public boolean processReconfig(QuorumVerifier qv, Long suggestedLeaderId, Long zxid, boolean restartLE) {
-        if (!QuorumPeerConfig.isReconfigEnabled()) {
+        if (!isReconfigEnabled()) {
             LOG.debug("Reconfig feature is disabled, skip reconfig processing.");
             return false;
         }
@@ -2519,6 +2539,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return vote != null && id == vote.getId();
     }
 
+    public boolean isReconfigEnabled() {
+        return reconfigEnabled;
+    }
+
     @InterfaceAudience.Private
     /**
      * This is a metric that depends on the status of the peer.
@@ -2530,6 +2554,68 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         } else {
             return null;
         }
+    }
+
+    /**
+     * Create a new QuorumPeer and apply all the values per the already-parsed config.
+     *
+     * @param config The appertained quorum peer config.
+     * @return A QuorumPeer instantiated with specified peer config. Note this peer
+     *         is not fully initialized; caller should finish initialization through
+     *         additional configurations (connection factory settings, etc).
+     *
+     * @throws IOException
+     */
+    public static QuorumPeer createFromConfig(QuorumPeerConfig config) throws IOException {
+        QuorumPeer quorumPeer = new QuorumPeer();
+        quorumPeer.setTxnFactory(new FileTxnSnapLog(config.getDataLogDir(), config.getDataDir()));
+        quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
+        quorumPeer.enableLocalSessionsUpgrading(config.isLocalSessionsUpgradingEnabled());
+        quorumPeer.setElectionType(config.getElectionAlg());
+        quorumPeer.setMyid(config.getServerId());
+        quorumPeer.setTickTime(config.getTickTime());
+        quorumPeer.setMinSessionTimeout(config.getMinSessionTimeout());
+        quorumPeer.setMaxSessionTimeout(config.getMaxSessionTimeout());
+        quorumPeer.setInitLimit(config.getInitLimit());
+        quorumPeer.setSyncLimit(config.getSyncLimit());
+        quorumPeer.setConnectToLearnerMasterLimit(config.getConnectToLearnerMasterLimit());
+        quorumPeer.setObserverMasterPort(config.getObserverMasterPort());
+        quorumPeer.setConfigFileName(config.getConfigFilename());
+        quorumPeer.setClientPortListenBacklog(config.getClientPortListenBacklog());
+        quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
+        quorumPeer.setQuorumVerifier(config.getQuorumVerifier(), false);
+        if (config.getLastSeenQuorumVerifier() != null) {
+            quorumPeer.setLastSeenQuorumVerifier(config.getLastSeenQuorumVerifier(), false);
+        }
+        quorumPeer.initConfigInZKDatabase();
+        quorumPeer.setSslQuorum(config.isSslQuorum());
+        quorumPeer.setUsePortUnification(config.shouldUsePortUnification());
+        quorumPeer.setLearnerType(config.getPeerType());
+        quorumPeer.setSyncEnabled(config.getSyncEnabled());
+        quorumPeer.setQuorumListenOnAllIPs(config.getQuorumListenOnAllIPs());
+        if (config.sslQuorumReloadCertFiles) {
+            quorumPeer.getX509Util().enableCertFileReloading();
+        }
+        quorumPeer.setMultiAddressEnabled(config.isMultiAddressEnabled());
+        quorumPeer.setMultiAddressReachabilityCheckEnabled(config.isMultiAddressReachabilityCheckEnabled());
+        quorumPeer.setMultiAddressReachabilityCheckTimeoutMs(config.getMultiAddressReachabilityCheckTimeoutMs());
+
+        // sets quorum sasl authentication configurations
+        quorumPeer.setQuorumSaslEnabled(config.quorumEnableSasl);
+        if (quorumPeer.isQuorumSaslAuthEnabled()) {
+            quorumPeer.setQuorumServerSaslRequired(config.quorumServerRequireSasl);
+            quorumPeer.setQuorumLearnerSaslRequired(config.quorumLearnerRequireSasl);
+            quorumPeer.setQuorumServicePrincipal(config.quorumServicePrincipal);
+            quorumPeer.setQuorumServerLoginContext(config.quorumServerLoginContext);
+            quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
+        }
+        quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+
+        if (config.jvmPauseMonitorToRun) {
+            quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
+        }
+
+        return quorumPeer;
     }
 
 }

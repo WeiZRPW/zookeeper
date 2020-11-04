@@ -18,6 +18,7 @@
 
 package org.apache.zookeeper.server;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -69,7 +70,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
     private final ByteBuffer lenBuffer = ByteBuffer.allocate(4);
 
-    private ByteBuffer incomingBuffer = lenBuffer;
+    protected ByteBuffer incomingBuffer = lenBuffer;
 
     private final Queue<ByteBuffer> outgoingBuffers = new LinkedBlockingQueue<ByteBuffer>();
 
@@ -381,7 +382,7 @@ public class NIOServerCnxn extends ServerCnxn {
         }
     }
 
-    private void readRequest() throws IOException {
+    protected void readRequest() throws IOException {
         zkServer.processPacket(this, incomingBuffer);
     }
 
@@ -442,7 +443,7 @@ public class NIOServerCnxn extends ServerCnxn {
          */
         private void checkFlush(boolean force) {
             if ((force && sb.length() > 0) || sb.length() > 2048) {
-                sendBufferSync(ByteBuffer.wrap(sb.toString().getBytes()));
+                sendBufferSync(ByteBuffer.wrap(sb.toString().getBytes(UTF_8)));
                 // clear our internal buffer
                 sb.setLength(0);
             }
@@ -665,13 +666,18 @@ public class NIOServerCnxn extends ServerCnxn {
     private static final ByteBuffer packetSentinel = ByteBuffer.allocate(0);
 
     @Override
-    public void sendResponse(ReplyHeader h, Record r, String tag, String cacheKey, Stat stat, int opCode) {
+    public int sendResponse(ReplyHeader h, Record r, String tag, String cacheKey, Stat stat, int opCode) {
+        int responseSize = 0;
         try {
-            sendBuffer(serialize(h, r, tag, cacheKey, stat, opCode));
+            ByteBuffer[] bb = serialize(h, r, tag, cacheKey, stat, opCode);
+            responseSize = bb[0].getInt();
+            bb[0].rewind();
+            sendBuffer(bb);
             decrOutstandingAndCheckThrottle(h);
         } catch (Exception e) {
             LOG.warn("Unexpected exception. Destruction averted.", e);
         }
+        return responseSize;
     }
 
     /*
@@ -695,7 +701,8 @@ public class NIOServerCnxn extends ServerCnxn {
         // The last parameter OpCode here is used to select the response cache.
         // Passing OpCode.error (with a value of -1) means we don't care, as we don't need
         // response cache on delivering watcher events.
-        sendResponse(h, e, "notification", null, null, ZooDefs.OpCode.error);
+        int responseSize = sendResponse(h, e, "notification", null, null, ZooDefs.OpCode.error);
+        ServerMetrics.getMetrics().WATCH_BYTES.add(responseSize);
     }
 
     /*
