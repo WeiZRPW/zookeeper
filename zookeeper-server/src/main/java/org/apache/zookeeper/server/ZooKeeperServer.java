@@ -46,10 +46,13 @@ import org.apache.zookeeper.Environment;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.KeeperException.SessionExpiredException;
+import org.apache.zookeeper.Quotas;
+import org.apache.zookeeper.StatsTrack;
 import org.apache.zookeeper.Version;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooDefs.OpCode;
 import org.apache.zookeeper.ZookeeperBanner;
+import org.apache.zookeeper.common.StringUtils;
 import org.apache.zookeeper.common.Time;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Id;
@@ -95,17 +98,21 @@ import org.slf4j.LoggerFactory;
 public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     protected static final Logger LOG;
+    private static final RateLogger RATE_LOGGER;
 
     public static final String GLOBAL_OUTSTANDING_LIMIT = "zookeeper.globalOutstandingLimit";
 
     public static final String ENABLE_EAGER_ACL_CHECK = "zookeeper.enableEagerACLCheck";
     public static final String SKIP_ACL = "zookeeper.skipACL";
+    public static final String ENFORCE_QUOTA = "zookeeper.enforceQuota";
 
     // When enabled, will check ACL constraints appertained to the requests first,
     // before sending the requests to the quorum.
     static final boolean enableEagerACLCheck;
 
     static final boolean skipACL;
+
+    public static final boolean enforceQuota;
 
     public static final String SASL_SUPER_USER = "zookeeper.superUser";
 
@@ -121,6 +128,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     static {
         LOG = LoggerFactory.getLogger(ZooKeeperServer.class);
 
+        RATE_LOGGER = new RateLogger(LOG);
+
         ZookeeperBanner.printBanner(LOG);
 
         Environment.logEnv("Server environment:", LOG);
@@ -131,6 +140,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         skipACL = System.getProperty(SKIP_ACL, "no").equals("yes");
         if (skipACL) {
             LOG.info("{}==\"yes\", ACL checks will be skipped", SKIP_ACL);
+        }
+
+        enforceQuota = Boolean.parseBoolean(System.getProperty(ENFORCE_QUOTA, "false"));
+        if (enforceQuota) {
+            LOG.info("{} = {}, Quota Enforce enables", ENFORCE_QUOTA, enforceQuota);
         }
 
         digestEnabled = Boolean.parseBoolean(System.getProperty(ZOOKEEPER_DIGEST_ENABLED, "true"));
@@ -237,7 +251,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         intBufferStartingSizeBytes = Integer.getInteger(INT_BUFFER_STARTING_SIZE_BYTES, DEFAULT_STARTING_BUFFER_SIZE);
 
         if (intBufferStartingSizeBytes < 32) {
-            String msg = "Buffer starting size must be greater than 0."
+            String msg = "Buffer starting size must be greater than or equal to 32."
                          + "Configure with \"-Dzookeeper.intBufferStartingSizeBytes=<size>\" ";
             LOG.error(msg);
             throw new IllegalArgumentException(msg);
@@ -346,9 +360,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
         LOG.info(
             "Created server with"
-                + " tickTime {}"
-                + " minSessionTimeout {}"
-                + " maxSessionTimeout {}"
+                + " tickTime {} ms"
+                + " minSessionTimeout {} ms"
+                + " maxSessionTimeout {} ms"
                 + " clientPortListenBacklog {}"
                 + " datadir {}"
                 + " snapdir {}",
@@ -528,6 +542,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         long elapsed = Time.currentElapsedTime() - start;
         LOG.info("Snapshot taken in {} ms", elapsed);
         ServerMetrics.getMetrics().SNAPSHOT_TIME.add(elapsed);
+    }
+
+    public boolean shouldForceWriteInitialSnapshotAfterLeaderElection() {
+        return txnLogFactory.shouldForceWriteInitialSnapshotAfterLeaderElection();
     }
 
     @Override
@@ -1210,7 +1228,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     /**
-     * return the last proceesed id from the
+     * return the last processed id from the
      * datatree
      */
     public long getLastProcessedZxid() {
@@ -1219,7 +1237,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     /**
      * return the outstanding requests
-     * in the queue, which havent been
+     * in the queue, which haven't been
      * processed yet
      */
     public long getOutstandingRequests() {
@@ -1245,7 +1263,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     /**
-     * trunccate the log to get in sync with others
+     * truncate the log to get in sync with others
      * if in a quorum
      * @param zxid the zxid that it needs to get in sync
      * with others
@@ -1260,7 +1278,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     public void setTickTime(int tickTime) {
-        LOG.info("tickTime set to {}", tickTime);
+        LOG.info("tickTime set to {} ms", tickTime);
         this.tickTime = tickTime;
     }
 
@@ -1269,7 +1287,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     public static void setThrottledOpWaitTime(int time) {
-        LOG.info("throttledOpWaitTime set to {}", time);
+        LOG.info("throttledOpWaitTime set to {} ms", time);
         throttledOpWaitTime = time;
     }
 
@@ -1279,7 +1297,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     public void setMinSessionTimeout(int min) {
         this.minSessionTimeout = min == -1 ? tickTime * 2 : min;
-        LOG.info("minSessionTimeout set to {}", this.minSessionTimeout);
+        LOG.info("minSessionTimeout set to {} ms", this.minSessionTimeout);
     }
 
     public int getMaxSessionTimeout() {
@@ -1288,7 +1306,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     public void setMaxSessionTimeout(int max) {
         this.maxSessionTimeout = max == -1 ? tickTime * 20 : max;
-        LOG.info("maxSessionTimeout set to {}", this.maxSessionTimeout);
+        LOG.info("maxSessionTimeout set to {} ms", this.maxSessionTimeout);
     }
 
     public int getClientPortListenBacklog() {
@@ -1478,7 +1496,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     static void setFlushDelay(long delay) {
-        LOG.info("{}={}", FLUSH_DELAY, delay);
+        LOG.info("{} = {} ms", FLUSH_DELAY, delay);
         flushDelay = delay;
     }
 
@@ -1487,7 +1505,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     static void setMaxWriteQueuePollTime(long maxTime) {
-        LOG.info("{}={}", MAX_WRITE_QUEUE_POLL_SIZE, maxTime);
+        LOG.info("{} = {} ms", MAX_WRITE_QUEUE_POLL_SIZE, maxTime);
         maxWriteQueuePollTime = maxTime;
     }
 
@@ -2000,6 +2018,119 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
         }
         throw new KeeperException.NoAuthException();
+    }
+
+    /**
+     * check a path whether exceeded the quota.
+     *
+     * @param path
+     *            the path of the node, used for the quota prefix check
+     * @param lastData
+     *            the current node data, {@code null} for none
+     * @param data
+     *            the data to be set, or {@code null} for none
+     * @param type
+     *            currently, create and setData need to check quota
+     */
+    public void checkQuota(String path, byte[] lastData, byte[] data, int type) throws KeeperException.QuotaExceededException {
+        if (!enforceQuota) {
+            return;
+        }
+        long dataBytes = (data == null) ? 0 : data.length;
+        ZKDatabase zkDatabase = getZKDatabase();
+        String lastPrefix = zkDatabase.getDataTree().getMaxPrefixWithQuota(path);
+        if (StringUtils.isEmpty(lastPrefix)) {
+            return;
+        }
+
+        switch (type) {
+            case OpCode.create:
+                checkQuota(lastPrefix, dataBytes, 1);
+                break;
+            case OpCode.setData:
+                checkQuota(lastPrefix, dataBytes - (lastData == null ? 0 : lastData.length), 0);
+                break;
+             default:
+                 throw new IllegalArgumentException("Unsupported OpCode for checkQuota: " + type);
+        }
+    }
+
+    /**
+     * check a path whether exceeded the quota.
+     *
+     * @param lastPrefix
+                  the path of the node which has a quota.
+     * @param bytesDiff
+     *            the diff to be added to number of bytes
+     * @param countDiff
+     *            the diff to be added to the count
+     */
+    private void checkQuota(String lastPrefix, long bytesDiff, long countDiff)
+            throws KeeperException.QuotaExceededException {
+        LOG.debug("checkQuota: lastPrefix={}, bytesDiff={}, countDiff={}", lastPrefix, bytesDiff, countDiff);
+
+        // now check the quota we set
+        String limitNode = Quotas.limitPath(lastPrefix);
+        DataNode node = getZKDatabase().getNode(limitNode);
+        StatsTrack limitStats;
+        if (node == null) {
+            // should not happen
+            LOG.error("Missing limit node for quota {}", limitNode);
+            return;
+        }
+        synchronized (node) {
+            limitStats = new StatsTrack(node.data);
+        }
+        //check the quota
+        boolean checkCountQuota = countDiff != 0 && (limitStats.getCount() > -1 || limitStats.getCountHardLimit() > -1);
+        boolean checkByteQuota = bytesDiff != 0 && (limitStats.getBytes() > -1 || limitStats.getByteHardLimit() > -1);
+
+        if (!checkCountQuota && !checkByteQuota) {
+            return;
+        }
+
+        //check the statPath quota
+        String statNode = Quotas.statPath(lastPrefix);
+        node = getZKDatabase().getNode(statNode);
+
+        StatsTrack currentStats;
+        if (node == null) {
+            // should not happen
+            LOG.error("Missing node for stat {}", statNode);
+            return;
+        }
+        synchronized (node) {
+            currentStats = new StatsTrack(node.data);
+        }
+
+        //check the Count Quota
+        if (checkCountQuota) {
+            long newCount = currentStats.getCount() + countDiff;
+            boolean isCountHardLimit = limitStats.getCountHardLimit() > -1 ? true : false;
+            long countLimit = isCountHardLimit ? limitStats.getCountHardLimit() : limitStats.getCount();
+
+            if (newCount > countLimit) {
+                String msg = "Quota exceeded: " + lastPrefix + " [current count=" + newCount + ", " + (isCountHardLimit ? "hard" : "soft") + "CountLimit=" + countLimit + "]";
+                RATE_LOGGER.rateLimitLog(msg);
+                if (isCountHardLimit) {
+                    throw new KeeperException.QuotaExceededException(lastPrefix);
+                }
+            }
+        }
+
+        //check the Byte Quota
+        if (checkByteQuota) {
+            long newBytes = currentStats.getBytes() + bytesDiff;
+            boolean isByteHardLimit = limitStats.getByteHardLimit() > -1 ? true : false;
+            long byteLimit = isByteHardLimit ? limitStats.getByteHardLimit() : limitStats.getBytes();
+            if (newBytes > byteLimit) {
+                String msg = "Quota exceeded: " + lastPrefix + " [current bytes=" + newBytes + ", " + (isByteHardLimit ? "hard" : "soft") + "ByteLimit=" + byteLimit + "]";
+                RATE_LOGGER.rateLimitLog(msg);
+                if (isByteHardLimit) {
+                    throw new KeeperException.QuotaExceededException(lastPrefix);
+                }
+            }
+        }
     }
 
     public static boolean isDigestEnabled() {
